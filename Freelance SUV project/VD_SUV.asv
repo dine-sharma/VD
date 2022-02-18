@@ -1,0 +1,239 @@
+
+clearvars;
+clc;
+close all;
+%% Engine torque data and curves
+
+EngineData = load('SafariTorque.csv');
+EngineRPM = EngineData(:,1);       % Engine speed in RPM
+EngineRadPs = EngineRPM *(pi/30);
+EngineTorque = EngineData(:,2);    % Engine speed in radian per second
+
+figure(1)
+plot(EngineRadPs,EngineTorque);
+
+
+% Define a second degree polynomial function establishing relationship
+% between Engine speed in Radian per second and Engine Torque in Nm
+% This relationship is of the form:
+% EngineTorque = Equation_1(1)*(EngineRadPs)^2
+%              + Equation_1(2)*(EngineRadPs) + Equation_1(3)
+%
+% We use this relationship to establish different engine torque for
+% variable engine RPM values at different speeds
+
+Equation = polyfit(EngineRadPs,EngineTorque,2);
+
+%% Vehicle parameters
+
+Wheelbase = 2.741;                         % meters
+Track = 1.894;
+Height = 1.786;
+
+AirDragCoefficient = 0.4;
+FrontalArea = 2.08;                        % m^2
+AirDensity = 1.225;                        % kg/m^3
+
+KerbWeight = 1675;                         % kg
+DriverWeight = 70;                         % kg
+CarWeight = KerbWeight + DriverWeight;
+g = 9.8;
+
+AllowedFrontLoad = 600 * g;                % Allowed load on FL and FR
+% tires individually
+
+AllowedRearLoad = 600 * g;                 % Allowed load on RL and RR
+% tires individually
+
+FrontWheelRadius = 0.369;                  % meters
+RearWheelRadius = 0.369;                   % meters
+
+% Weight Distribution
+
+FrontWeight = 0.64;                        % 64 percent weight is in front
+RearWeight = 0.36;                         % 36 perecnt weight is in rear
+
+% Gears
+
+MaximumGears = 6;
+
+%Gear Number and Corresponding ratio
+
+Gears = [1 2.583 ; 2  2.701 ; 3 1.688 ; 4 1.412 ; 5 1.2 ; 6 0.9];
+FinalDrive = 3.938;
+
+MinimumEngineRPM = 1000;
+MaximumEngineRPM = 3800;
+
+CoefficientOfFriction = 0.8;
+CoefficientOfRollingResistance = 0.018;
+
+%% Vehicle Dynamics
+ 
+Counter = 1;
+
+% Initial Conditions
+ 
+dt = 0.05;
+LoadTransfer = 0;
+ 
+GearNo = Gears(1,1);
+GearRatio = Gears(GearNo,2);
+ 
+EngineRPM = MinimumEngineRPM;
+ 
+ViKph = 0;                                   %kph
+
+while ViKph<=100
+     
+    ViMps = ViKph/3.6;                       %mps
+     
+     
+    EngineRadPs = EngineRPM * (pi/30);
+    EngineTorque = Equation(1)*(pi/30)^2 * (EngineRPM)^2 +...
+        Equation(2)* (pi/30)* EngineRPM + Equation(3);
+    EnginePower =  (EngineRadPs * EngineTorque)/1000;
+    TotalEffect = GearRatio * FinalDrive;
+    
+    
+    % Wheel Information
+    [WheelTorque,ForceOnWheel,WheelRadPs,WheelSpeed] = WheelInformation...
+        (EngineTorque,TotalEffect,FrontWheelRadius,EngineRadPs);
+    
+    % Load Transfer
+    [FrontLoad,RearLoad] = Loads(LoadTransfer,FrontWeight,...
+        CarWeight,AllowedFrontLoad,RearWeight,AllowedRearLoad);
+    
+    %Traction
+    FrontTraction = FrontLoad*(CoefficientOfFriction)/(1+(Height*...
+        CoefficientOfFriction)/Wheelbase);
+    RearTraction = RearLoad*(CoefficientOfFriction)/(1-(Height*...
+        CoefficientOfFriction)/Wheelbase);
+    
+    FrontTraction = min(FrontTraction,ForceOnWheel);
+    TotalTraction = FrontTraction+RearTraction;
+
+    % Acceleration
+    AirResistance = (0.5* AirDensity * FrontalArea *...
+        AirDragCoefficient*((ViMps/3.6)^2));
+    RollingResistance = CoefficientOfRollingResistance * CarWeight*g;
+    Acceleration = (TotalTraction - (AirResistance+RollingResistance))...
+        / CarWeight;
+    
+    % Final Velocity    
+    VfMps = (Acceleration*dt) + ViMps;
+    VfKph = VfMps * 3.6;
+    
+    % Engine Final speed
+    [EngineFinalRPM] = EngineFinalSpeed(VfMps,FrontWheelRadius,TotalEffect,MinimumEngineRPM,MaximumEngineRPM);
+    
+    
+    ViKph = VfKph;
+    ViMps = ViKph/3.6;
+    
+    if(EngineRPM > MaximumEngineRPM)
+        GearNo = GearNo +1;
+        if (GearNo > MaximumGears)
+            GearNo = MaximumGears;
+        end
+    end
+    
+    NewGearRatio = Gears(GearNo,2);
+    
+    EngineRPM = EngineFinalRPM * (NewGearRatio/GearRatio);
+    LoadTransfer = (TotalTraction)*(Height/Wheelbase);
+    
+    GearRatio = NewGearRatio;
+    dt = dt + 0.05;
+    Counter = Counter+1;
+    
+    
+%         figure(2)
+%     
+%         scatter(dt,ViKph);
+%         hold on
+%     
+%         figure(3)
+%     
+%         scatter(ViKph,EngineTorque)
+%         hold on
+%     
+%         figure(4)
+%         scatter(GearNo,Acceleration)
+%         hold on
+%         figure(5)
+%         scatter(AirResistance,ViKph)
+%         hold on
+%         
+%         figure(6)
+%         
+%         scatter(ViKph,TotalTraction)
+%         hold on
+    Velocity(Counter) = ViKph;
+    Time(Counter)= dt;
+    Torque(Counter) = EngineTorque;
+    RPM(Counter) = EngineRPM;
+    F(Counter) = TotalTraction;
+end
+
+figure(2)
+plot(Time,Velocity);
+
+figure(3)
+plot(Time,Torque);
+
+figure(4)
+plot(Velocity,RPM)
+
+%% Functions
+ 
+% Wheel Information
+
+function [WheelTorque,ForceOnWheel,WheelRadPs,WheelSpeed] = WheelInformation(EngineTorque,TotalEffect,FrontWheelRadius,EngineRadPs)
+
+WheelTorque = EngineTorque * TotalEffect;                  % Nm
+
+ForceOnWheel = WheelTorque / FrontWheelRadius;             % N
+
+WheelRadPs = EngineRadPs/TotalEffect;                      % Radian per Second
+
+WheelSpeed = WheelRadPs * FrontWheelRadius *3.6;           % kph
+
+end
+
+
+% Load Transfer
+
+function [FrontLoad,RearLoad] = Loads(LoadTransfer,FrontWeight,CarWeight,AllowedFrontLoad,RearWeight,AllowedRearLoad)
+
+FrontLoad = (FrontWeight * CarWeight * 9.8) - LoadTransfer;
+
+if (FrontLoad/2 > AllowedFrontLoad)
+    
+    FrontLoad = AllowedFrontLoad*2;
+end
+
+
+RearLoad = (RearWeight * CarWeight * 9.8) + LoadTransfer;
+
+
+if (RearLoad/2 > AllowedRearLoad)
+    
+    RearLoad = AllowedRearLoad*2;
+end
+end
+ 
+% EngineFinalSpeed
+
+function [EngineFinalRPM] = EngineFinalSpeed(VfMps,FrontWheelRadius,TotalEffect,MinimumEngineRPM,MaximumEngineRPM)
+
+EngineFinalRPM = ((VfMps/FrontWheelRadius)*TotalEffect)*(30/pi);
+if (EngineFinalRPM < MinimumEngineRPM)
+    
+    EngineFinalRPM = MinimumEngineRPM;
+end
+if (EngineFinalRPM > MaximumEngineRPM)
+    
+    EngineFinalRPM = MaximumEngineRPM;
+end
+end
